@@ -8,6 +8,10 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../../core/theme/app_tokens.dart';
+import 'common/app_card.dart';
+import 'common/empty_state.dart';
 
 class DiscordWidget extends StatefulWidget {
   const DiscordWidget({super.key});
@@ -20,7 +24,6 @@ class _DiscordWidgetState extends State<DiscordWidget> {
   bool _isLoading = false;
   Map<String, dynamic>? _userData;
   String? _error;
-  bool _isExpanded = false;
 
   @override
   void initState() {
@@ -31,7 +34,7 @@ class _DiscordWidgetState extends State<DiscordWidget> {
   Future<void> _checkLoginStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('discord_access_token');
-    if (token != null) {
+    if (token != null && mounted) {
       setState(() => _isLoading = true);
       try {
         await _fetchUserData(token);
@@ -114,6 +117,7 @@ class _DiscordWidgetState extends State<DiscordWidget> {
       }
     } catch (e) {
       debugPrint("Discord Auth Error: $e");
+      if (!mounted) return;
       setState(() {
         _error = "Erreur de connexion Discord";
       });
@@ -185,6 +189,7 @@ class _DiscordWidgetState extends State<DiscordWidget> {
     );
 
     if (response.statusCode == 200) {
+      if (!mounted) return;
       setState(() {
         _userData = json.decode(response.body);
       });
@@ -197,224 +202,170 @@ class _DiscordWidgetState extends State<DiscordWidget> {
 
   @override
   Widget build(BuildContext context) {
-    const discordColor = Color(0xFF5865F2);
-    const bentoBackground = Color(0xFF151515); // Bento Box Dark Theme
-    final bentoBorder = Border.all(color: Colors.white10, width: 1);
-
-    if (_isLoading) {
-      return Container(
-        height: 160,
-        decoration: BoxDecoration(
-          color: bentoBackground,
-          borderRadius: BorderRadius.circular(24),
-          border: bentoBorder,
-        ),
-        child: const Center(
-          child: CircularProgressIndicator(color: discordColor),
-        ),
-      );
-    }
+    if (_isLoading) return const SkeletonCard(height: 150);
 
     if (_userData == null) {
-      return Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: bentoBackground,
-          borderRadius: BorderRadius.circular(24),
-          border: bentoBorder,
-        ),
-        child: InkWell(
-          onTap: _login,
-          borderRadius: BorderRadius.circular(24),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.chat_bubble, color: Colors.white),
-              const SizedBox(width: 16),
-              Text(
-                _error ?? 'Connecter Discord',
-                style: TextStyle(
-                    color: _error != null ? Colors.red : Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16),
-              ),
-            ],
-          ),
-        ),
+      return ConnectServiceCard(
+        icon: const FaIcon(FontAwesomeIcons.discord),
+        brandColor: AppColors.discord,
+        service: 'Discord',
+        description: 'Affichez votre carte de profil.',
+        error: _error,
+        onConnect: _login,
       );
     }
 
-    // Extracted User Data
-    final id = _userData!['id'];
-    final avatarHash = _userData!['avatar'];
-    final bannerHash = _userData!['banner'];
-    final bannerColorInt = _userData!['accent_color'];
-    final premiumType = _userData!['premium_type'] ?? 0;
-    
+    final theme = Theme.of(context);
+    final user = _userData!;
+    final id = user['id'];
+    final avatarHash = user['avatar'] as String?;
+    final bannerHash = user['banner'] as String?;
+    final bannerColorInt = user['accent_color'] as int?;
+    final premiumType = user['premium_type'] ?? 0;
+
     final avatarExt = avatarHash != null && avatarHash.startsWith('a_') ? 'gif' : 'png';
-    final avatarUrl = avatarHash != null 
-        ? 'https://cdn.discordapp.com/avatars/$id/$avatarHash.$avatarExt?size=256' 
-        : null;
-        
+    final avatarUrl = avatarHash != null ? 'https://cdn.discordapp.com/avatars/$id/$avatarHash.$avatarExt?size=256' : null;
+
     final bannerExt = bannerHash != null && bannerHash.startsWith('a_') ? 'gif' : 'png';
-    final bannerUrl = bannerHash != null 
-        ? 'https://cdn.discordapp.com/banners/$id/$bannerHash.$bannerExt?size=512' 
+    final bannerUrl = bannerHash != null ? 'https://cdn.discordapp.com/banners/$id/$bannerHash.$bannerExt?size=600' : null;
+
+    final decorationAsset = user['avatar_decoration_data']?['asset'];
+    final decorationUrl = decorationAsset != null
+        ? 'https://cdn.discordapp.com/avatar-decoration-presets/$decorationAsset.png?size=256'
         : null;
 
-    final avatarDecorationData = _userData!['avatar_decoration_data'];
-    final decorationAsset = avatarDecorationData != null ? avatarDecorationData['asset'] : null;
-    final decorationUrl = decorationAsset != null 
-        ? 'https://cdn.discordapp.com/avatar-decoration-presets/$decorationAsset.png?size=256' 
-        : null;
-        
-    final fallbackColor = bannerColorInt != null 
-        ? Color(bannerColorInt).withValues(alpha: 1.0)
-        : discordColor;
+    final bannerColor = bannerColorInt != null ? Color(0xFF000000 | bannerColorInt) : AppColors.discord;
+    const bannerHeight = 84.0;
+    const avatarRadius = 34.0;
 
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          _isExpanded = !_isExpanded;
-        });
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-        decoration: BoxDecoration(
-          color: bentoBackground,
-          borderRadius: BorderRadius.circular(24),
-          border: bentoBorder,
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(23),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // Banner Background
-              if (bannerUrl != null)
-                Positioned.fill(
-                  child: Image.network(
-                    bannerUrl,
-                    fit: BoxFit.fitWidth, // Empêche le zoom quand la hauteur de la carte change
-                    alignment: Alignment.topCenter,
-                  ),
-                )
-              else
-                Positioned.fill(
-                  child: Container(color: fallbackColor),
+    return AppCard(
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // Bannière
+                SizedBox(
+                  height: bannerHeight,
+                  width: double.infinity,
+                  child: bannerUrl != null
+                      ? Image.network(
+                          bannerUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => ColoredBox(color: bannerColor),
+                        )
+                      : DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [bannerColor, Color.lerp(bannerColor, Colors.black, 0.45)!],
+                            ),
+                          ),
+                        ),
                 ),
-                
-              // Gradient to make text readable
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        bentoBackground.withValues(alpha: 0.6),
-                        bentoBackground.withValues(alpha: 0.95),
+                Positioned(
+                  top: AppSpacing.md,
+                  left: AppSpacing.md,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        FaIcon(FontAwesomeIcons.discord, size: 12, color: Colors.white),
+                        SizedBox(width: 6),
+                        Text('DISCORD', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700, letterSpacing: 1.1)),
                       ],
-                      stops: const [0.0, 0.4, 1.0],
                     ),
                   ),
                 ),
-              ),
-              
-              // Centered Content with Animation
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: AnimatedSize(
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut,
-                  alignment: Alignment.topCenter,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Avatar
-                      Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: const BoxDecoration(
-                              color: bentoBackground,
-                              shape: BoxShape.circle,
-                            ),
-                            child: CircleAvatar(
-                              radius: 35,
-                              backgroundColor: fallbackColor,
-                              backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                              child: avatarUrl == null ? const Icon(Icons.person, size: 35, color: Colors.white) : null,
+                // Avatar qui chevauche la bannière
+                Positioned(
+                  left: AppSpacing.lg,
+                  top: bannerHeight - avatarRadius,
+                  child: SizedBox(
+                    width: avatarRadius * 2 + 20,
+                    height: avatarRadius * 2 + 20,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: const BoxDecoration(color: AppColors.surface, shape: BoxShape.circle),
+                          child: CircleAvatar(
+                            radius: avatarRadius,
+                            backgroundColor: bannerColor,
+                            backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                            child: avatarUrl == null ? const Icon(Icons.person_rounded, size: 32, color: Colors.white) : null,
+                          ),
+                        ),
+                        if (decorationUrl != null)
+                          IgnorePointer(
+                            child: Image.network(
+                              decorationUrl,
+                              width: avatarRadius * 2 + 20,
+                              height: avatarRadius * 2 + 20,
+                              errorBuilder: (_, _, _) => const SizedBox.shrink(),
                             ),
                           ),
-                          if (decorationUrl != null)
-                            IgnorePointer(
-                              child: SizedBox(
-                                width: 86,
-                                height: 86,
-                                child: Image.network(decorationUrl),
-                              ),
-                            ),
-                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg + avatarRadius * 2 + 28,
+                AppSpacing.md,
+                AppSpacing.lg,
+                AppSpacing.lg,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          user['global_name'] ?? user['username'] ?? '',
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800, fontSize: 17),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      
-                      if (_isExpanded) ...[
-                        const SizedBox(height: 12),
-                        // User Info on the same line
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                _userData!['global_name'] ?? _userData!['username'],
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
-                                  letterSpacing: -0.5,
-                                  height: 1.0,
-                                ),
-                                textAlign: TextAlign.center,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                      if (premiumType > 0) ...[
+                        const SizedBox(width: 6),
+                        Tooltip(
+                          message: 'Nitro',
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF47FFF).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
                             ),
-                            const SizedBox(width: 6),
-                            Text(
-                              '@${_userData!['username']}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w400,
-                                color: Colors.white70,
-                                height: 1.0,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            if (premiumType > 0)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 6, bottom: 1),
-                                child: Container(
-                                  padding: const EdgeInsets.all(3),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFF47FFF).withValues(alpha: 0.1),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: const Icon(Icons.star, color: Color(0xFFF47FFF), size: 11),
-                                ),
-                              ),
-                          ],
+                            child: const Icon(Icons.diamond_rounded, color: Color(0xFFF47FFF), size: 12),
+                          ),
                         ),
                       ],
                     ],
                   ),
-                ),
+                  Text(
+                    '@${user['username'] ?? ''}',
+                    style: theme.textTheme.bodyMedium?.copyWith(fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

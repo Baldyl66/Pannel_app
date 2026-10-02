@@ -1,10 +1,25 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import 'settings_page.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../core/theme/app_tokens.dart';
+import '../../core/utils/formatters.dart';
+import '../../data/local_store.dart';
+import '../../data/models/models.dart';
+import '../widgets/common/app_card.dart';
+import '../widgets/common/app_dialogs.dart';
+import '../widgets/common/empty_state.dart';
+import '../widgets/common/page_header.dart';
+import '../widgets/common/thumbnail.dart';
+
+final _store = JsonListStore<LinkItem>(
+  key: 'saved_links',
+  fromJson: LinkItem.fromJson,
+  toJson: (l) => l.toJson(),
+);
+
+String _faviconFor(String url) =>
+    'https://www.google.com/s2/favicons?sz=128&domain=${Uri.encodeComponent(displayHost(url))}';
 
 class LinksTab extends StatefulWidget {
   const LinksTab({super.key});
@@ -14,364 +29,369 @@ class LinksTab extends StatefulWidget {
 }
 
 class _LinksTabState extends State<LinksTab> {
-  List<Map<String, String>> _links = [];
+  List<LinkItem> _links = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadLinks();
+    _load();
   }
 
-  Future<void> _loadLinks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final linksString = prefs.getString('saved_links');
-    if (linksString != null) {
-      final List<dynamic> decoded = jsonDecode(linksString);
-      setState(() {
-        _links = decoded.map((item) => Map<String, String>.from(item)).toList();
-      });
-    } else {
-      // Default links (empty)
-      setState(() {
-        _links = [];
-      });
-      _saveLinks();
-    }
-  }
-
-  Future<void> _saveLinks() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('saved_links', jsonEncode(_links));
-  }
-
-  Future<void> _launchUrl(String urlString) async {
-    String finalUrl = urlString.trim();
-    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
-      finalUrl = 'https://$finalUrl';
-    }
-    final uri = Uri.tryParse(finalUrl);
-    if (uri != null && await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Impossible d\'ouvrir ce lien')),
-        );
-      }
-    }
-  }
-
-  void _showAddLinkDialog([int? indexToEdit]) {
-    String title = indexToEdit != null ? _links[indexToEdit]['title'] ?? '' : '';
-    String url = indexToEdit != null ? _links[indexToEdit]['url'] ?? '' : '';
-    String imageUrl = indexToEdit != null ? _links[indexToEdit]['imageUrl'] ?? '' : '';
-
-    final titleController = TextEditingController(text: title)..selection = TextSelection.fromPosition(TextPosition(offset: title.length));
-    final urlController = TextEditingController(text: url)..selection = TextSelection.fromPosition(TextPosition(offset: url.length));
-    final imageController = TextEditingController(text: imageUrl)..selection = TextSelection.fromPosition(TextPosition(offset: imageUrl.length));
-
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: '',
-      barrierColor: Colors.black.withValues(alpha: 0.6),
-      transitionDuration: const Duration(milliseconds: 300),
-      pageBuilder: (context, animation, secondaryAnimation) {
-        return ScaleTransition(
-          scale: CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
-          child: StatefulBuilder(
-            builder: (context, setDialogState) {
-              return AlertDialog(
-                backgroundColor: const Color(0xFF151515),
-                surfaceTintColor: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  side: BorderSide(color: Colors.white.withValues(alpha: 0.1), width: 1),
-                ),
-                titlePadding: const EdgeInsets.only(top: 24, left: 24, right: 24, bottom: 16),
-                title: Text(
-                  indexToEdit != null ? 'Modifier le lien' : 'Nouveau lien',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22),
-                  textAlign: TextAlign.center,
-                ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: titleController,
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(Icons.title, color: Colors.white54, size: 20),
-                        hintText: 'Titre (ex: Mon Site)',
-                        hintStyle: const TextStyle(color: Colors.white38),
-                        filled: true,
-                        fillColor: Colors.white.withValues(alpha: 0.05),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                      ),
-                      onChanged: (val) => title = val,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: urlController,
-                      style: const TextStyle(color: Colors.white, fontSize: 15),
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(Icons.link, color: Colors.white54, size: 20),
-                        hintText: 'URL (ex: https://...)',
-                        hintStyle: const TextStyle(color: Colors.white38),
-                        filled: true,
-                        fillColor: Colors.white.withValues(alpha: 0.05),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                      ),
-                      onChanged: (val) => url = val,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: imageController,
-                            style: const TextStyle(color: Colors.white, fontSize: 15),
-                            decoration: InputDecoration(
-                              prefixIcon: const Icon(Icons.image_outlined, color: Colors.white54, size: 20),
-                              hintText: 'URL de l\'image',
-                              hintStyle: const TextStyle(color: Colors.white38),
-                              filled: true,
-                              fillColor: Colors.white.withValues(alpha: 0.05),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                            ),
-                            onChanged: (val) => imageUrl = val,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.05),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: IconButton(
-                            icon: const Icon(Icons.photo_library, color: Colors.white54),
-                            onPressed: () async {
-                              final ImagePicker picker = ImagePicker();
-                              final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-                              if (image != null) {
-                                setDialogState(() {
-                                  imageUrl = image.path;
-                                  imageController.text = image.path;
-                                });
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
-                actionsPadding: const EdgeInsets.only(left: 24, right: 24, bottom: 24, top: 16),
-                actionsAlignment: MainAxisAlignment.spaceBetween,
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.redAccent,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    child: const Text('Annuler', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF4285F4),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      elevation: 0,
-                    ),
-                    onPressed: () {
-                      final currentTitle = titleController.text.trim();
-                      final currentUrl = urlController.text.trim();
-                      final currentImageUrl = imageController.text.trim();
-                      
-                      if (currentTitle.isNotEmpty && currentUrl.isNotEmpty) {
-                        setState(() {
-                          String finalUrl = currentUrl;
-                          if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
-                            finalUrl = 'https://$finalUrl';
-                          }
-                          final newLink = {'title': currentTitle, 'url': finalUrl, 'imageUrl': currentImageUrl};
-                          if (indexToEdit != null) {
-                            _links[indexToEdit] = newLink;
-                          } else {
-                            _links.add(newLink);
-                          }
-                        });
-                        _saveLinks();
-                        Navigator.pop(context);
-                      }
-                    },
-                    child: const Text('Enregistrer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                  ),
-                ],
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  void _deleteLink(int index) {
+  Future<void> _load() async {
+    final items = await _store.load();
+    if (!mounted) return;
     setState(() {
-      _links.removeAt(index);
+      _links = items;
+      _isLoading = false;
     });
-    _saveLinks();
+  }
+
+  Future<void> _persist() => _store.save(_links);
+
+  Future<void> _open(LinkItem link) async {
+    final uri = Uri.tryParse(normalizeUrl(link.url));
+    bool opened = false;
+    try {
+      opened = uri != null && await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {}
+    if (!opened && mounted) {
+      showAppSnackBar(context, 'Impossible d\'ouvrir ce lien', isError: true);
+    }
+  }
+
+  Future<void> _openForm([int? index]) async {
+    final result = await showAppSheet<LinkItem>(
+      context,
+      title: index == null ? 'Nouveau lien' : 'Modifier le lien',
+      builder: (_) => _LinkForm(initial: index == null ? null : _links[index]),
+    );
+    if (result == null) return;
+    setState(() {
+      if (index != null) {
+        _links[index] = result;
+      } else {
+        _links.add(result);
+      }
+    });
+    await _persist();
+  }
+
+  Future<void> _delete(int index) async {
+    final link = _links[index];
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Supprimer le lien ?',
+      message: '« ${link.title} » sera retiré de vos liens rapides.',
+      confirmLabel: 'Supprimer',
+      icon: Icons.delete_outline_rounded,
+      destructive: true,
+    );
+    if (!confirmed) return;
+    setState(() => _links.removeAt(index));
+    await _persist();
+  }
+
+  Future<void> _showActions(int index) async {
+    HapticFeedback.mediumImpact();
+    final link = _links[index];
+    final action = await showActionSheet<String>(
+      context,
+      title: link.title,
+      subtitle: displayHost(link.url),
+      actions: const [
+        SheetAction(value: 'open', label: 'Ouvrir', icon: Icons.open_in_new_rounded),
+        SheetAction(value: 'copy', label: 'Copier le lien', icon: Icons.copy_rounded),
+        SheetAction(value: 'edit', label: 'Modifier', icon: Icons.edit_outlined),
+        SheetAction(value: 'delete', label: 'Supprimer', icon: Icons.delete_outline_rounded, destructive: true),
+      ],
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'open':
+        _open(link);
+      case 'copy':
+        await Clipboard.setData(ClipboardData(text: link.url));
+        if (mounted) showAppSnackBar(context, 'Lien copié');
+      case 'edit':
+        _openForm(index);
+      case 'delete':
+        _delete(index);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 72.0),
-        child: FloatingActionButton(
-          backgroundColor: Colors.white,
-          onPressed: () => _showAddLinkDialog(),
-          child: const Icon(Icons.add, color: Colors.black),
+      floatingActionButton: _links.isEmpty
+          ? null
+          : FloatingActionButton(
+              heroTag: null,
+              tooltip: 'Ajouter un lien',
+              onPressed: () => _openForm(),
+              child: const Icon(Icons.add_rounded),
+            ),
+      body: SafeArea(
+        bottom: false,
+        child: ContentWidth(
+          maxWidth: 960,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PageHeader(
+                title: 'Liens',
+                subtitle: _links.isEmpty ? 'Accès rapide' : '${_links.length} favori${_links.length > 1 ? 's' : ''}',
+              ),
+              Expanded(child: _buildBody()),
+            ],
+          ),
         ),
       ),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // En-tête centré avec paramètres
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const SizedBox(width: 48),
-                  const Text(
-                    'Liens Rapides',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.settings, color: Colors.white54),
-                    onPressed: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsPage()));
-                    },
-                  ),
-                ],
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    if (_links.isEmpty) {
+      return EmptyState(
+        icon: Icons.bookmarks_outlined,
+        title: 'Aucun lien',
+        message: 'Gardez vos sites préférés à portée de main. Appui long sur un lien pour le modifier.',
+        actionLabel: 'Ajouter un lien',
+        onAction: () => _openForm(),
+      );
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.lg, 96),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 240,
+        crossAxisSpacing: AppSpacing.md,
+        mainAxisSpacing: AppSpacing.md,
+        childAspectRatio: 1.25,
+      ),
+      itemCount: _links.length,
+      itemBuilder: (context, index) => _LinkCard(
+        link: _links[index],
+        onTap: () => _open(_links[index]),
+        onMore: () => _showActions(index),
+      ),
+    );
+  }
+}
+
+class _LinkCard extends StatelessWidget {
+  final LinkItem link;
+  final VoidCallback onTap;
+  final VoidCallback onMore;
+
+  const _LinkCard({required this.link, required this.onTap, required this.onMore});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final host = displayHost(link.url);
+
+    final moreButton = Align(
+      alignment: Alignment.topRight,
+      child: IconButton(
+        tooltip: 'Options',
+        visualDensity: VisualDensity.compact,
+        icon: Icon(Icons.more_horiz_rounded, color: link.hasImage ? Colors.white : null),
+        onPressed: onMore,
+      ),
+    );
+
+    if (link.hasImage) {
+      return AppCard(
+        onTap: onTap,
+        onLongPress: onMore,
+        padding: EdgeInsets.zero,
+        image: DecorationImage(
+          image: imageProviderFor(link.imageUrl!),
+          fit: BoxFit.cover,
+          onError: (_, _) {},
+        ),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.black.withValues(alpha: 0.05), Colors.black.withValues(alpha: 0.8)],
+            ),
+          ),
+          child: Stack(
+            children: [
+              moreButton,
+              Positioned(
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+                bottom: AppSpacing.md,
+                child: _Labels(title: link.title, host: host),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return AppCard(
+      onTap: onTap,
+      onLongPress: onMore,
+      padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, 0, AppSpacing.md),
+      child: Stack(
+        children: [
+          moreButton,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Thumbnail(
+                path: _faviconFor(link.url),
+                fallbackIcon: Icons.public_rounded,
+                size: 40,
+                fit: BoxFit.contain,
+                background: Colors.white.withValues(alpha: 0.9),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: AppSpacing.md),
+                child: _Labels(title: link.title, host: host, hostColor: theme.textTheme.bodyMedium?.color),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Labels extends StatelessWidget {
+  final String title;
+  final String host;
+  final Color? hostColor;
+  const _Labels({required this.title, required this.host, this.hostColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(title, style: theme.textTheme.titleMedium?.copyWith(color: Colors.white), maxLines: 1, overflow: TextOverflow.ellipsis),
+        Text(
+          host,
+          style: TextStyle(fontSize: 12, color: hostColor ?? Colors.white70),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+  }
+}
+
+class _LinkForm extends StatefulWidget {
+  final LinkItem? initial;
+  const _LinkForm({this.initial});
+
+  @override
+  State<_LinkForm> createState() => _LinkFormState();
+}
+
+class _LinkFormState extends State<_LinkForm> {
+  final _formKey = GlobalKey<FormState>();
+  late final _url = TextEditingController(text: widget.initial?.url ?? '');
+  late final _title = TextEditingController(text: widget.initial?.title ?? '');
+  late final _image = TextEditingController(text: widget.initial?.imageUrl ?? '');
+
+  @override
+  void dispose() {
+    _url.dispose();
+    _title.dispose();
+    _image.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (image != null) setState(() => _image.text = image.path);
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    final url = normalizeUrl(_url.text);
+    final title = _title.text.trim();
+    Navigator.pop(
+      context,
+      LinkItem(
+        title: title.isEmpty ? displayHost(url) : title,
+        url: url,
+        imageUrl: _image.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _url,
+            autofocus: widget.initial == null,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.next,
+            autocorrect: false,
+            decoration: const InputDecoration(
+              labelText: 'Adresse',
+              hintText: 'youtube.com',
+              prefixIcon: Icon(Icons.link_rounded),
+            ),
+            validator: (v) {
+              final value = (v ?? '').trim();
+              if (value.isEmpty) return 'Adresse requise';
+              final uri = Uri.tryParse(normalizeUrl(value));
+              if (uri == null || uri.host.isEmpty || !uri.host.contains('.')) return 'Adresse invalide';
+              return null;
+            },
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextFormField(
+            controller: _title,
+            textCapitalization: TextCapitalization.sentences,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: 'Titre (optionnel)',
+              hintText: 'Par défaut : le nom du site',
+              prefixIcon: Icon(Icons.title_rounded),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextFormField(
+            controller: _image,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              labelText: 'Image de fond (optionnel)',
+              hintText: 'URL ou image de la galerie',
+              prefixIcon: const Icon(Icons.image_outlined),
+              suffixIcon: IconButton(
+                tooltip: 'Choisir dans la galerie',
+                icon: const Icon(Icons.photo_library_outlined),
+                onPressed: _pickImage,
               ),
             ),
-            
-            Expanded(
-              child: _links.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.link_off, color: Colors.white24, size: 64),
-                          SizedBox(height: 16),
-                          Text(
-                            "Aucun lien sauvegardé",
-                            style: TextStyle(color: Colors.white54, fontSize: 16, fontWeight: FontWeight.w500),
-                          ),
-                        ],
-                      ),
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.all(16),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 16,
-                        mainAxisSpacing: 16,
-                        childAspectRatio: 1.5,
-                      ),
-                      itemCount: _links.length,
-                      itemBuilder: (context, index) {
-                        final link = _links[index];
-                        final hasImage = link['imageUrl'] != null && link['imageUrl']!.isNotEmpty;
-                        return InkWell(
-                          onTap: () => _launchUrl(link['url'] ?? ''),
-                          onLongPress: () {
-                            showModalBottomSheet(
-                              context: context,
-                              backgroundColor: const Color(0xFF151515),
-                              shape: const RoundedRectangleBorder(
-                                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-                              ),
-                              builder: (context) => SafeArea(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    ListTile(
-                                      leading: const Icon(Icons.edit, color: Colors.white),
-                                      title: const Text('Modifier', style: TextStyle(color: Colors.white)),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        _showAddLinkDialog(index);
-                                      },
-                                    ),
-                                    ListTile(
-                                      leading: const Icon(Icons.delete, color: Colors.redAccent),
-                                      title: const Text('Supprimer', style: TextStyle(color: Colors.redAccent)),
-                                      onTap: () {
-                                        Navigator.pop(context);
-                                        _deleteLink(index);
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                          borderRadius: BorderRadius.circular(20),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF151515),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
-                              image: hasImage 
-                                  ? DecorationImage(
-                                      image: link['imageUrl']!.startsWith('http')
-                                          ? NetworkImage(link['imageUrl']!) as ImageProvider
-                                          : FileImage(File(link['imageUrl']!)),
-                                      fit: BoxFit.cover,
-                                      colorFilter: ColorFilter.mode(Colors.black.withValues(alpha: 0.4), BlendMode.darken),
-                                    )
-                                  : null,
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                if (!hasImage)
-                                  const Icon(Icons.language, color: Colors.white, size: 32),
-                                if (!hasImage)
-                                  const SizedBox(height: 12),
-                                Text(
-                                  link['title'] ?? '',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          FilledButton(
+            onPressed: _submit,
+            child: Text(widget.initial == null ? 'Ajouter le lien' : 'Enregistrer'),
+          ),
+        ],
       ),
     );
   }

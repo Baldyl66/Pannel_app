@@ -1,14 +1,29 @@
-import 'package:flutter/material.dart';
-import '../widgets/spotify_player_widget.dart';
-import '../widgets/discord_widget.dart';
-import '../widgets/calendar_widget.dart';
-import 'subscriptions_tab.dart';
-import 'settings_page.dart';
-import 'soundboard_tab.dart';
-import 'links_tab.dart';
-import '../../services/theme_service.dart';
 import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../../core/theme/app_tokens.dart';
+import '../../services/theme_service.dart';
+import 'home_tab.dart';
+import 'links_tab.dart';
+import 'soundboard_tab.dart';
+import 'subscriptions_tab.dart';
 
+class _Destination {
+  final String label;
+  final IconData icon;
+  final IconData selectedIcon;
+  const _Destination(this.label, this.icon, this.selectedIcon);
+}
+
+const _destinations = [
+  _Destination('Panel', Icons.space_dashboard_outlined, Icons.space_dashboard_rounded),
+  _Destination('Dépenses', Icons.account_balance_wallet_outlined, Icons.account_balance_wallet_rounded),
+  _Destination('Sons', Icons.graphic_eq_outlined, Icons.graphic_eq_rounded),
+  _Destination('Liens', Icons.bookmarks_outlined, Icons.bookmarks_rounded),
+];
+
+/// Coquille principale : navigation en bas sur mobile, rail latéral sur les
+/// écrans larges (tablette, desktop).
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
@@ -19,133 +34,130 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage> {
   int _currentIndex = 0;
 
+  static const _pages = <Widget>[
+    HomeTab(),
+    SubscriptionsTab(),
+    SoundboardTab(),
+    LinksTab(),
+  ];
+
+  void _select(int index) {
+    if (index == _currentIndex) return;
+    HapticFeedback.selectionClick();
+    setState(() => _currentIndex = index);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.sizeOf(context).width >= 840;
+
     return ListenableBuilder(
       listenable: themeNotifier,
-      builder: (context, child) {
+      builder: (context, _) {
         final bgPath = themeNotifier.backgroundImagePath;
+        final hasBackground = bgPath != null && File(bgPath).existsSync();
 
-        // Les deux pages principales du BottomNavigationBar
-        final List<Widget> pages = [
-      // Page 1 : Panel (Spotify + Discord)
-      SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const SizedBox(width: 48), // Pour centrer le titre
-                  const Text('Panel', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-                  IconButton(
-                    icon: const Icon(Icons.settings, color: Colors.white54),
-                    onPressed: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsPage()));
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const SpotifyPlayerWidget(),
-              SizedBox(height: 16),
-              DiscordWidget(),
-              SizedBox(height: 16),
-              CalendarWidget(),
-            ],
-          ),
-        ),
-      ),
-      // Page 2 : Abonnements
-      const SubscriptionsTab(),
-      // Page 3 : Soundboard
-      const SoundboardTab(),
-      // Page 4 : Liens
-      const LinksTab(),
-    ];
+        final body = IndexedStack(index: _currentIndex, children: _pages);
 
         return Scaffold(
-          backgroundColor: bgPath != null ? Colors.transparent : const Color(0xFF000000),
-          extendBody: true,
           body: Stack(
             children: [
-              if (bgPath != null)
+              if (hasBackground) ...[
+                Positioned.fill(child: Image.file(File(bgPath), fit: BoxFit.cover)),
+                // Voile dégradé pour garder le texte lisible sur n'importe quelle image.
                 Positioned.fill(
-                  child: Image.file(
-                    File(bgPath),
-                    fit: BoxFit.cover,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.35),
+                          Colors.black.withValues(alpha: 0.75),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-              if (bgPath != null)
-                Positioned.fill(
-                  child: Container(
-                    color: Colors.black.withValues(alpha: 0.3),
-                  ),
-                ),
-              IndexedStack(
-                index: _currentIndex,
-                children: pages,
-              ),
+              ],
+              if (isWide)
+                Row(
+                  children: [
+                    _SideRail(
+                      selectedIndex: _currentIndex,
+                      onSelected: _select,
+                      translucent: hasBackground,
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: body),
+                  ],
+                )
+              else
+                body,
             ],
           ),
-          bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(color: Colors.white10, width: 1),
-          ),
-        ),
-        child: BottomNavigationBar(
-          type: BottomNavigationBarType.fixed,
-          backgroundColor: bgPath != null ? Colors.black.withValues(alpha: 0.6) : const Color(0xFF000000),
-          selectedItemColor: Colors.white, // White instead of Green for Pro look
-          unselectedItemColor: Colors.white30,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
-          currentIndex: _currentIndex,
-          onTap: (index) {
-            setState(() {
-              _currentIndex = index;
-            });
-          },
-          items: const [
-            BottomNavigationBarItem(
-              icon: Padding(
-                padding: EdgeInsets.only(bottom: 4),
-                child: Icon(Icons.grid_view_rounded),
-              ),
-              label: 'Panel',
-            ),
-            BottomNavigationBarItem(
-              icon: Padding(
-                padding: EdgeInsets.only(bottom: 4),
-                child: Icon(Icons.account_balance_wallet_rounded),
-              ),
-              label: 'Dépenses',
-            ),
-            BottomNavigationBarItem(
-              icon: Padding(
-                padding: EdgeInsets.only(bottom: 4),
-                child: Icon(Icons.grid_on_rounded),
-              ),
-              label: 'Sons',
-            ),
-            BottomNavigationBarItem(
-              icon: Padding(
-                padding: EdgeInsets.only(bottom: 4),
-                child: Icon(Icons.language_rounded),
-              ),
-              label: 'Liens',
-            ),
-          ],
-        ),
-      ),
-    );
+          bottomNavigationBar: isWide
+              ? null
+              : DecoratedBox(
+                  decoration: const BoxDecoration(
+                    border: Border(top: BorderSide(color: AppColors.border)),
+                  ),
+                  child: NavigationBar(
+                    backgroundColor: hasBackground ? Colors.black.withValues(alpha: 0.85) : null,
+                    selectedIndex: _currentIndex,
+                    onDestinationSelected: _select,
+                    destinations: [
+                      for (final d in _destinations)
+                        NavigationDestination(
+                          icon: Icon(d.icon),
+                          selectedIcon: Icon(d.selectedIcon),
+                          label: d.label,
+                        ),
+                    ],
+                  ),
+                ),
+        );
       },
     );
   }
 }
 
+class _SideRail extends StatelessWidget {
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+  final bool translucent;
 
+  const _SideRail({required this.selectedIndex, required this.onSelected, required this.translucent});
 
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return NavigationRail(
+      backgroundColor: translucent ? Colors.black.withValues(alpha: 0.6) : null,
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onSelected,
+      labelType: NavigationRailLabelType.all,
+      groupAlignment: -0.9,
+      leading: Padding(
+        padding: const EdgeInsets.only(top: AppSpacing.lg, bottom: AppSpacing.xl),
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Icon(Icons.dashboard_customize_rounded, color: accent),
+        ),
+      ),
+      destinations: [
+        for (final d in _destinations)
+          NavigationRailDestination(
+            icon: Icon(d.icon),
+            selectedIcon: Icon(d.selectedIcon),
+            label: Text(d.label),
+          ),
+      ],
+    );
+  }
+}

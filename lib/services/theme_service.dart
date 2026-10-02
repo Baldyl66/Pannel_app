@@ -14,14 +14,14 @@ class ThemeNotifier extends ChangeNotifier {
 
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
-    
+
     int? colorValue = prefs.getInt('theme_accent_color');
     if (colorValue != null) {
       _accentColor = Color(colorValue);
     }
 
     _backgroundImagePath = prefs.getString('theme_bg_image');
-    
+
     notifyListeners();
   }
 
@@ -46,3 +46,10 @@ class ThemeNotifier extends ChangeNotifier {
 
 // Instance globale du thème
 final ThemeNotifier themeNotifier = ThemeNotifier();
+
+/// Incrémenté à chaque connexion / déconnexion d'un compte (ou rafraîchissement
+/// manuel). Les widgets du panel s'en servent comme clé pour se recharger, ce
+/// qui évite de devoir redémarrer l'application.
+final ValueNotifier<int> accountsRevision = ValueNotifier<int>(0);
+
+void notifyAccountsChanged() => accountsRevision.value++;

@@ -1,41 +1,37 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
-import 'settings_page.dart';
+import '../../core/theme/app_tokens.dart';
+import '../../core/utils/formatters.dart';
+import '../../data/local_store.dart';
+import '../../data/models/models.dart';
+import '../widgets/common/app_card.dart';
+import '../widgets/common/app_dialogs.dart';
+import '../widgets/common/empty_state.dart';
+import '../widgets/common/page_header.dart';
+import '../widgets/common/thumbnail.dart';
 
-class Subscription {
-  final String id;
+final _store = JsonListStore<Subscription>(
+  key: 'saved_subscriptions',
+  fromJson: Subscription.fromJson,
+  toJson: (s) => s.toJson(),
+);
+
+class _Template {
   final String name;
-  final double price;
-  final String? description;
-  final String? imagePath;
-
-  const Subscription({
-    required this.id,
-    required this.name,
-    required this.price,
-    this.description,
-    this.imagePath,
-  });
-
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'price': price,
-    'description': description,
-    'imagePath': imagePath,
-  };
-
-  factory Subscription.fromJson(Map<String, dynamic> json) => Subscription(
-    id: json['id'],
-    name: json['name'],
-    price: json['price'],
-    description: json['description'],
-    imagePath: json['imagePath'],
-  );
+  final String? image;
+  const _Template(this.name, this.image);
 }
+
+const _templates = [
+  _Template('Spotify', 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/spotify.png'),
+  _Template('Netflix', 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/netflix.png'),
+  _Template('Amazon Prime', 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/amazon.png'),
+  _Template('YouTube', 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/youtube.png'),
+  _Template('Discord Nitro', 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/discord.png'),
+  _Template('Snapchat', 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/snapchat.png'),
+  _Template('Railway', 'https://avatars.githubusercontent.com/u/74384995'),
+];
 
 class SubscriptionsTab extends StatefulWidget {
   const SubscriptionsTab({super.key});
@@ -51,480 +47,438 @@ class _SubscriptionsTabState extends State<SubscriptionsTab> {
   @override
   void initState() {
     super.initState();
-    _loadSubscriptions();
+    _load();
   }
 
-  Future<void> _loadSubscriptions() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? data = prefs.getString('saved_subscriptions');
-    if (data != null) {
-      final List<dynamic> decoded = json.decode(data);
-      setState(() {
-        _subscriptions = decoded.map((e) {
-          var sub = Subscription.fromJson(e);
-          // Nettoyer les liens clearbit ou invalides qui font planter le réseau
-          if (sub.imagePath != null && sub.imagePath!.contains('clearbit.com')) {
-            sub = Subscription(id: sub.id, name: sub.name, price: sub.price, description: sub.description, imagePath: null);
-          }
-          return sub;
-        }).toList();
-      });
-      _saveSubscriptions();
-    }
-    setState(() => _isLoading = false);
-  }
-
-  Future<void> _saveSubscriptions() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String encoded = json.encode(_subscriptions.map((e) => e.toJson()).toList());
-    await prefs.setString('saved_subscriptions', encoded);
-  }
-
-  Future<void> _deleteSubscription(String id) async {
+  Future<void> _load() async {
+    final items = await _store.load();
+    if (!mounted) return;
     setState(() {
-      _subscriptions.removeWhere((element) => element.id == id);
+      _subscriptions = items;
+      _isLoading = false;
     });
-    await _saveSubscriptions();
   }
 
-  Future<void> _showAddDialog() async {
-    final List<Map<String, String?>> templates = [
-      {'name': 'Spotify', 'image': 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/spotify.png'},
-      {'name': 'Amazon Prime', 'image': 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/amazon.png'},
-      {'name': 'Railway', 'image': 'https://avatars.githubusercontent.com/u/74384995'},
-      {'name': 'Discord Nitro', 'image': 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/discord.png'},
-      {'name': 'Snapchat', 'image': 'https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/snapchat.png'},
-      {'name': 'Autre', 'image': null},
-    ];
+  Future<void> _persist() => _store.save(_subscriptions);
 
-    await showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF151515),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text('Choisir un abonnement', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
-                const SizedBox(height: 24),
-                Wrap(
-                  spacing: 16,
-                  runSpacing: 16,
-                  alignment: WrapAlignment.center,
-                  children: templates.map((t) {
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.pop(context);
-                        _showCustomAddDialog(t['name'] == 'Autre' ? null : t['name'], t['image']);
-                      },
-                      child: SizedBox(
-                        width: 80,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 60,
-                              height: 60,
-                              decoration: BoxDecoration(
-                                color: t['image'] == null ? Colors.white10 : Colors.transparent,
-                                borderRadius: BorderRadius.circular(16),
-                                image: t['image'] != null
-                                    ? DecorationImage(
-                                        image: NetworkImage(t['image']!),
-                                        fit: BoxFit.contain,
-                                      )
-                                    : null,
-                              ),
-                              child: t['image'] == null ? const Icon(Icons.add, color: Colors.white, size: 32) : null,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(t['name']!, style: const TextStyle(color: Colors.white70, fontSize: 12), textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
-                          ],
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
-            ),
-          ),
-        );
+  List<Subscription> get _sorted => [..._subscriptions]..sort((a, b) => b.price.compareTo(a.price));
+
+  double get _monthlyTotal => _subscriptions.fold(0.0, (sum, s) => sum + s.price);
+
+  Future<void> _openForm([Subscription? existing]) async {
+    final result = await showAppSheet<Subscription>(
+      context,
+      title: existing == null ? 'Nouvel abonnement' : 'Modifier',
+      builder: (_) => _SubscriptionForm(initial: existing),
+    );
+    if (result == null) return;
+    setState(() {
+      final index = _subscriptions.indexWhere((s) => s.id == result.id);
+      if (index >= 0) {
+        _subscriptions[index] = result;
+      } else {
+        _subscriptions.add(result);
       }
+    });
+    await _persist();
+  }
+
+  Future<void> _delete(Subscription sub) async {
+    final index = _subscriptions.indexWhere((s) => s.id == sub.id);
+    if (index < 0) return;
+    setState(() => _subscriptions.removeAt(index));
+    await _persist();
+    if (!mounted) return;
+    showAppSnackBar(
+      context,
+      '« ${sub.name} » supprimé',
+      actionLabel: 'Annuler',
+      onAction: () {
+        setState(() => _subscriptions.insert(index.clamp(0, _subscriptions.length), sub));
+        _persist();
+      },
     );
   }
 
-  Future<void> _showCustomAddDialog([String? prefilledName, String? prefilledImagePath]) async {
-    String name = prefilledName ?? "";
-    String priceStr = "";
-    String description = "";
-    String? imagePath = prefilledImagePath;
-    
-    final picker = ImagePicker();
-
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF151515),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              title: const Text('Nouvel Abonnement', style: TextStyle(color: Colors.white)),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Image Picker Button
-                    GestureDetector(
-                      onTap: () async {
-                        final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-                        if (image != null) {
-                          setDialogState(() {
-                            imagePath = image.path;
-                          });
-                        }
-                      },
-                      child: Container(
-                        height: 100,
-                        width: 100,
-                        decoration: BoxDecoration(
-                          color: Colors.white10,
-                          borderRadius: BorderRadius.circular(20),
-                          image: imagePath != null ? DecorationImage(
-                            image: imagePath!.startsWith('http')
-                                ? NetworkImage(imagePath!) as ImageProvider
-                                : FileImage(File(imagePath!)),
-                            fit: BoxFit.contain,
-                          ) : null,
-                        ),
-                        child: imagePath == null
-                            ? const Icon(Icons.add_a_photo, color: Colors.white54, size: 32)
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    TextField(
-                      controller: TextEditingController(text: name)..selection = TextSelection.fromPosition(TextPosition(offset: name.length)),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        hintText: 'Nom (ex: Netflix)',
-                        hintStyle: const TextStyle(color: Colors.white54),
-                        filled: true,
-                        fillColor: Colors.white10,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                      ),
-                      onChanged: (val) => name = val,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      style: const TextStyle(color: Colors.white),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                        hintText: 'Prix (ex: 12.99)',
-                        hintStyle: const TextStyle(color: Colors.white54),
-                        filled: true,
-                        fillColor: Colors.white10,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                      ),
-                      onChanged: (val) => priceStr = val,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        hintText: 'Description (Optionnel)',
-                        hintStyle: const TextStyle(color: Colors.white54),
-                        filled: true,
-                        fillColor: Colors.white10,
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                      ),
-                      onChanged: (val) => description = val,
-                    ),
-                  ],
-                ),
-              ),
-              actionsAlignment: MainAxisAlignment.spaceBetween,
-              actions: [
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Annuler', style: TextStyle(color: Colors.black)),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.white),
-                  onPressed: () {
-                    final price = double.tryParse(priceStr.replaceAll(',', '.'));
-                    if (name.isNotEmpty && price != null) {
-                      Navigator.pop(context, true);
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Veuillez entrer un nom et un prix valide.')),
-                      );
-                    }
-                  },
-                  child: const Text('Ajouter', style: TextStyle(color: Colors.black)),
-                ),
-              ],
-            );
-          }
-        );
-      }
-    ).then((confirmed) async {
-      if (confirmed == true) {
-        final newSub = Subscription(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          name: name,
-          price: double.parse(priceStr.replaceAll(',', '.')),
-          description: description.isNotEmpty ? description : null,
-          imagePath: imagePath,
-        );
-        setState(() {
-          _subscriptions.add(newSub);
-        });
-        await _saveSubscriptions();
-      }
-    });
+  Future<void> _showActions(Subscription sub) async {
+    HapticFeedback.mediumImpact();
+    final action = await showActionSheet<String>(
+      context,
+      title: sub.name,
+      subtitle: '${formatEuro(sub.price)} / mois',
+      actions: const [
+        SheetAction(value: 'edit', label: 'Modifier', icon: Icons.edit_outlined),
+        SheetAction(value: 'delete', label: 'Supprimer', icon: Icons.delete_outline_rounded, destructive: true),
+      ],
+    );
+    if (action == 'edit') _openForm(sub);
+    if (action == 'delete') _delete(sub);
   }
 
   @override
   Widget build(BuildContext context) {
+    final count = _subscriptions.length;
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: count == 0
+          ? null
+          : FloatingActionButton.extended(
+              heroTag: null,
+              onPressed: () => _openForm(),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Ajouter'),
+            ),
+      body: SafeArea(
+        bottom: false,
+        child: ContentWidth(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PageHeader(
+                title: 'Dépenses',
+                subtitle: count == 0 ? 'Abonnements' : '$count abonnement${count > 1 ? 's' : ''} actif${count > 1 ? 's' : ''}',
+              ),
+              Expanded(child: _buildBody()),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Colors.white));
+      return const Padding(
+        padding: EdgeInsets.all(AppSpacing.lg),
+        child: Column(children: [SkeletonCard(height: 140), SizedBox(height: AppSpacing.md), SkeletonCard(height: 76)]),
+      );
+    }
+    if (_subscriptions.isEmpty) {
+      return EmptyState(
+        icon: Icons.account_balance_wallet_outlined,
+        title: 'Aucun abonnement',
+        message: 'Ajoutez vos abonnements pour suivre ce qu\'ils vous coûtent chaque mois et chaque année.',
+        actionLabel: 'Ajouter un abonnement',
+        onAction: () => _openForm(),
+      );
     }
 
-    final total = _subscriptions.fold(0.0, (sum, item) => sum + item.price);
+    final sorted = _sorted;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, 96),
+      children: [
+        _SummaryCard(monthly: _monthlyTotal, top: sorted.first),
+        const SectionLabel('Abonnements', trailing: Text('Balayez pour supprimer', style: TextStyle(fontSize: 11, color: AppColors.textTertiary))),
+        for (final sub in sorted) ...[
+          Dismissible(
+            key: ValueKey(sub.id),
+            direction: DismissDirection.endToStart,
+            background: Container(
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: AppSpacing.xl),
+              decoration: BoxDecoration(
+                color: AppColors.danger.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+              ),
+              child: const Icon(Icons.delete_outline_rounded, color: AppColors.danger),
+            ),
+            onDismissed: (_) => _delete(sub),
+            child: _SubscriptionTile(
+              sub: sub,
+              share: _monthlyTotal == 0 ? 0 : sub.price / _monthlyTotal,
+              onTap: () => _openForm(sub),
+              onLongPress: () => _showActions(sub),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+        ],
+      ],
+    );
+  }
+}
 
-    return SafeArea(
+class _SummaryCard extends StatelessWidget {
+  final double monthly;
+  final Subscription top;
+  const _SummaryCard({required this.monthly, required this.top});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.xl),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [accent.withValues(alpha: 0.28), AppColors.surface],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Total mensuel', style: theme.textTheme.bodyMedium),
+          const SizedBox(height: AppSpacing.xs),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              formatEuro(monthly),
+              style: theme.textTheme.headlineMedium?.copyWith(fontSize: 40),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Row(
+            children: [
+              Expanded(child: _Stat(label: 'Par an', value: formatEuro(monthly * 12))),
+              Container(width: 1, height: 32, color: AppColors.border),
+              const SizedBox(width: AppSpacing.lg),
+              Expanded(child: _Stat(label: 'Le plus cher', value: top.name)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Stat extends StatelessWidget {
+  final String label;
+  final String value;
+  const _Stat({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label.toUpperCase(), style: theme.textTheme.labelSmall),
+        const SizedBox(height: 2),
+        Text(value, style: theme.textTheme.titleMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ],
+    );
+  }
+}
+
+class _SubscriptionTile extends StatelessWidget {
+  final Subscription sub;
+  final double share;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _SubscriptionTile({required this.sub, required this.share, required this.onTap, required this.onLongPress});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AppCard(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
         children: [
-          // En-tête centré avec paramètres
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(width: 48), // Équilibre avec le bouton à droite
-                Column(
-                  children: [
-                    const Text(
-                      'Mes Abonnements',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: Colors.white10,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '${_subscriptions.length} Actifs',
-                        style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.white54),
-                  onPressed: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsPage()));
-                  },
-                ),
-              ],
-            ),
-          ),
-          
-          // Liste
-          Expanded(
-            child: _subscriptions.isEmpty
-              ? const Center(
-                  child: Text(
-                    "Aucun abonnement enregistré.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54, fontSize: 16),
-                  ),
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  itemCount: _subscriptions.length,
-                  separatorBuilder: (context, index) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final sub = _subscriptions[index];
-                    return Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF151515),
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: Colors.white10, width: 1),
-                      ),
-                      child: Row(
-                        children: [
-                          // Image ou Icone par défaut
-                          Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: sub.imagePath == null ? Colors.white10 : Colors.transparent,
-                              borderRadius: BorderRadius.circular(12),
-                              image: sub.imagePath != null
-                                  ? DecorationImage(
-                                      image: sub.imagePath!.startsWith('http')
-                                          ? NetworkImage(sub.imagePath!) as ImageProvider
-                                          : FileImage(File(sub.imagePath!)),
-                                      fit: BoxFit.contain,
-                                    )
-                                  : null,
-                            ),
-                            child: sub.imagePath == null
-                                ? const Icon(Icons.receipt_long, color: Colors.white70)
-                                : null,
-                          ),
-                          const SizedBox(width: 16),
-                          // Textes (Nom + Description)
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  sub.name,
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                if (sub.description != null && sub.description!.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    sub.description!,
-                                    style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                      color: Colors.white54,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ]
-                              ],
-                            ),
-                          ),
-                          // Prix + Bouton supprimer
-                          Row(
-                            children: [
-                              Text(
-                                '${sub.price.toStringAsFixed(2)} €',
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                                onPressed: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (context) => AlertDialog(
-                                      backgroundColor: const Color(0xFF151515),
-                                      surfaceTintColor: Colors.transparent,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(24),
-                                        side: BorderSide(color: Colors.white.withValues(alpha: 0.1), width: 1),
-                                      ),
-                                      title: const Text('Supprimer l\'abonnement', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                      content: Text('Voulez-vous vraiment supprimer "${sub.name}" ?', style: const TextStyle(color: Colors.white70, fontSize: 15)),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () => Navigator.pop(context),
-                                          child: const Text('Annuler', style: TextStyle(color: Colors.white54)),
-                                        ),
-                                        ElevatedButton(
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.redAccent.withValues(alpha: 0.1),
-                                            foregroundColor: Colors.redAccent,
-                                            elevation: 0,
-                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                          ),
-                                          onPressed: () {
-                                            Navigator.pop(context);
-                                            _deleteSubscription(sub.id);
-                                          },
-                                          child: const Text('Supprimer', style: TextStyle(fontWeight: FontWeight.bold)),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-          ),
-
-          // Total en bas
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E1E1E),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(32),
-                topRight: Radius.circular(32),
+          Row(
+            children: [
+              Thumbnail(
+                path: sub.imagePath,
+                fallbackIcon: Icons.receipt_long_rounded,
+                fit: BoxFit.contain,
+                background: sub.imagePath == null ? null : Colors.transparent,
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black38,
-                  blurRadius: 20,
-                  offset: const Offset(0, -5),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Column(
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Total par mois',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.white54,
-                        fontWeight: FontWeight.w500,
+                    Text(sub.name, style: theme.textTheme.titleMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    if (sub.description?.isNotEmpty ?? false)
+                      Text(
+                        sub.description!,
+                        style: theme.textTheme.bodyMedium?.copyWith(fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(formatEuro(sub.price), style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                  Text('/ mois', style: theme.textTheme.bodyMedium?.copyWith(fontSize: 11)),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          // Part de cet abonnement dans le total mensuel.
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(value: share, minHeight: 3),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SubscriptionForm extends StatefulWidget {
+  final Subscription? initial;
+  const _SubscriptionForm({this.initial});
+
+  @override
+  State<_SubscriptionForm> createState() => _SubscriptionFormState();
+}
+
+class _SubscriptionFormState extends State<_SubscriptionForm> {
+  final _formKey = GlobalKey<FormState>();
+  late final _name = TextEditingController(text: widget.initial?.name ?? '');
+  late final _price = TextEditingController(
+    text: widget.initial == null ? '' : widget.initial!.price.toStringAsFixed(2).replaceAll('.', ','),
+  );
+  late final _description = TextEditingController(text: widget.initial?.description ?? '');
+  late String? _imagePath = widget.initial?.imagePath;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _price.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  void _applyTemplate(_Template t) {
+    HapticFeedback.selectionClick();
+    setState(() {
+      _name.text = t.name;
+      _imagePath = t.image;
+    });
+  }
+
+  Future<void> _pickImage() async {
+    final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (image != null) setState(() => _imagePath = image.path);
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    final description = _description.text.trim();
+    Navigator.pop(
+      context,
+      Subscription(
+        id: widget.initial?.id ?? newId(),
+        name: _name.text.trim(),
+        price: parsePrice(_price.text)!,
+        description: description.isEmpty ? null : description,
+        imagePath: _imagePath,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (widget.initial == null) ...[
+            Text('SUGGESTIONS', style: theme.textTheme.labelSmall),
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              height: 40,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _templates.length,
+                separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+                itemBuilder: (context, i) {
+                  final t = _templates[i];
+                  return ActionChip(
+                    avatar: Thumbnail(path: t.image, fallbackIcon: Icons.receipt_long, size: 20, radius: 4, fit: BoxFit.contain, background: Colors.transparent),
+                    label: Text(t.name),
+                    onPressed: () => _applyTemplate(t),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.sm)),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xl),
+          ],
+          Row(
+            children: [
+              InkWell(
+                onTap: _pickImage,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                child: Stack(
+                  children: [
+                    Thumbnail(
+                      path: _imagePath,
+                      fallbackIcon: Icons.add_photo_alternate_outlined,
+                      size: 64,
+                      radius: AppRadius.md,
+                      fit: BoxFit.contain,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${total.toStringAsFixed(2)} €',
-                      style: const TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(color: theme.colorScheme.primary, shape: BoxShape.circle),
+                        child: Icon(Icons.edit, size: 12, color: theme.colorScheme.onPrimary),
                       ),
                     ),
                   ],
                 ),
-                // Bouton Ajouter
-                FloatingActionButton(
-                  onPressed: _showAddDialog,
-                  backgroundColor: Colors.white,
-                  child: const Icon(Icons.add, color: Colors.black),
+              ),
+              const SizedBox(width: AppSpacing.lg),
+              Expanded(
+                child: TextFormField(
+                  controller: _name,
+                  textCapitalization: TextCapitalization.sentences,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(labelText: 'Nom', hintText: 'Netflix'),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Nom requis' : null,
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextFormField(
+            controller: _price,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textInputAction: TextInputAction.next,
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+            decoration: const InputDecoration(
+              labelText: 'Prix mensuel',
+              hintText: '12,99',
+              suffixText: '€',
+              prefixIcon: Icon(Icons.euro_rounded),
             ),
+            validator: (v) {
+              final price = parsePrice(v ?? '');
+              if (price == null) return 'Prix invalide';
+              if (price < 0) return 'Le prix doit être positif';
+              return null;
+            },
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextFormField(
+            controller: _description,
+            textCapitalization: TextCapitalization.sentences,
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _submit(),
+            decoration: const InputDecoration(
+              labelText: 'Note (optionnel)',
+              hintText: 'Forfait famille, renouvellement le 12…',
+              prefixIcon: Icon(Icons.notes_rounded),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          FilledButton(
+            onPressed: _submit,
+            child: Text(widget.initial == null ? 'Ajouter l\'abonnement' : 'Enregistrer'),
           ),
         ],
       ),

@@ -1,7 +1,12 @@
-import 'package:flutter/material.dart';
-import '../../services/google_calendar_service.dart';
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../core/theme/app_tokens.dart';
+import '../../core/utils/formatters.dart';
+import '../../services/google_calendar_service.dart';
+import 'common/app_card.dart';
+import 'common/app_dialogs.dart';
+import 'common/empty_state.dart';
 
 class CalendarWidget extends StatefulWidget {
   const CalendarWidget({super.key});
@@ -14,26 +19,23 @@ class _CalendarWidgetState extends State<CalendarWidget> {
   final GoogleCalendarService _calendarService = GoogleCalendarService();
   bool _isLoggedIn = false;
   bool _isLoading = true;
+  bool _isFetching = false;
   List<dynamic> _events = [];
   Timer? _refreshTimer;
   DateTime _selectedDate = DateTime.now();
 
-  String _formatDateLabel(DateTime date) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final target = DateTime(date.year, date.month, date.day);
-    final diff = target.difference(today).inDays;
-    
-    if (diff == 0) return "Aujourd'hui";
-    if (diff == 1) return "Demain";
-    if (diff == -1) return "Hier";
-    return DateFormat('dd/MM').format(date);
-  }
+  bool get _isToday => DateUtils.isSameDay(_selectedDate, DateTime.now());
 
   @override
   void initState() {
     super.initState();
     _checkLoginStatus();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _checkLoginStatus() async {
@@ -45,493 +47,371 @@ class _CalendarWidgetState extends State<CalendarWidget> {
     });
 
     if (loggedIn) {
-      _fetchEvents();
+      await _fetchEvents();
+      _refreshTimer?.cancel();
       _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) => _fetchEvents());
     }
   }
 
   Future<void> _fetchEvents() async {
     if (!_isLoggedIn) return;
-    final events = await _calendarService.getEventsForDate(_selectedDate);
-    if (!mounted) return;
+    setState(() => _isFetching = true);
+    final requested = _selectedDate;
+    List<dynamic> events = [];
+    try {
+      events = await _calendarService.getEventsForDate(requested);
+    } catch (e) {
+      debugPrint('Erreur agenda : $e');
+    }
+    // Ignore une réponse arrivée après un changement de jour.
+    if (!mounted || !DateUtils.isSameDay(requested, _selectedDate)) return;
     setState(() {
       _events = events;
+      _isFetching = false;
     });
+  }
+
+  void _changeDay(DateTime date) {
+    setState(() => _selectedDate = date);
+    _fetchEvents();
+  }
+
+  Future<void> _pickDay() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+    );
+    if (date != null) _changeDay(date);
   }
 
   Future<void> _login() async {
     setState(() => _isLoading = true);
     final error = await _calendarService.login();
-    if (error != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erreur: $error'), backgroundColor: Colors.red),
-      );
+    if (!mounted) return;
+    if (error != null) {
       setState(() => _isLoading = false);
+      showAppSnackBar(context, 'Connexion Google impossible : $error', isError: true);
       return;
     }
     await _checkLoginStatus();
   }
-  
-  Future<void> _showAddReminderDialog() async {
-    String title = "";
-    DateTime selectedDate = _selectedDate;
-    TimeOfDay selectedTime = TimeOfDay.now();
 
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-            return Container(
-              padding: EdgeInsets.only(bottom: bottomInset > 0 ? bottomInset + 16 : 32, left: 24, right: 24, top: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF151515),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-                border: Border.all(color: Colors.white10, width: 1),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 48,
-                      height: 5,
-                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Center(child: Text('Nouveau Rappel', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold))),
-                  const SizedBox(height: 24),
-                  TextField(
-                    autofocus: false,
-                    style: const TextStyle(color: Colors.white, fontSize: 18),
-                    decoration: InputDecoration(
-                      hintText: 'Que devez-vous faire ?',
-                      hintStyle: const TextStyle(color: Colors.white30, fontSize: 18),
-                      filled: true,
-                      fillColor: Colors.white.withValues(alpha: 0.05),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                    ),
-                    onChanged: (val) => title = val,
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final date = await showDatePicker(
-                              context: context,
-                              initialDate: selectedDate,
-                              firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                              lastDate: DateTime.now().add(const Duration(days: 365)),
-                            );
-                            if (date != null) setSheetState(() => selectedDate = date);
-                          },
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.05),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.calendar_today, color: Color(0xFF4285F4), size: 20),
-                                const SizedBox(width: 8),
-                                Text(DateFormat('dd/MM').format(selectedDate), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final time = await showTimePicker(
-                              context: context,
-                              initialTime: selectedTime,
-                            );
-                            if (time != null) setSheetState(() => selectedTime = time);
-                          },
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.05),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.access_time, color: Color(0xFF4285F4), size: 20),
-                                const SizedBox(width: 8),
-                                Text(selectedTime.format(context), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4285F4),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 0,
-                      ),
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Créer l\'événement', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-    
-    if (confirmed == true && title.isNotEmpty) {
-        final finalDateTime = DateTime(
-          selectedDate.year, selectedDate.month, selectedDate.day,
-          selectedTime.hour, selectedTime.minute,
-        );
-        setState(() => _isLoading = true);
-        await _calendarService.createReminder(title, finalDateTime);
-        await _fetchEvents();
-        setState(() => _isLoading = false);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Rappel ajouté au calendrier !', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              backgroundColor: const Color(0xFF4285F4),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
-      }
-  }
-  
-  Future<void> _showEditEventDialog(Map<String, dynamic> event) async {
-    final eventId = event['id'];
-    if (eventId == null) return;
-    
-    String title = event['summary'] ?? '';
-    final startStr = event['start']['dateTime'] ?? event['start']['date'];
-    DateTime selectedDate = startStr != null ? DateTime.parse(startStr).toLocal() : _selectedDate;
-    TimeOfDay selectedTime = TimeOfDay.fromDateTime(selectedDate);
-    bool shouldDelete = false;
-
-    final confirmed = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-            return Container(
-              padding: EdgeInsets.only(bottom: bottomInset > 0 ? bottomInset + 16 : 32, left: 24, right: 24, top: 16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF151515),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-                border: Border.all(color: Colors.white10, width: 1),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 48,
-                      height: 5,
-                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Modifier', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 28),
-                        onPressed: () {
-                          shouldDelete = true;
-                          Navigator.pop(context, true);
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: TextEditingController(text: title)..selection = TextSelection.fromPosition(TextPosition(offset: title.length)),
-                    style: const TextStyle(color: Colors.white, fontSize: 18),
-                    decoration: InputDecoration(
-                      hintText: 'Quoi faire ?',
-                      hintStyle: const TextStyle(color: Colors.white30, fontSize: 18),
-                      filled: true,
-                      fillColor: Colors.white.withValues(alpha: 0.05),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                    ),
-                    onChanged: (val) => title = val,
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final date = await showDatePicker(
-                              context: context,
-                              initialDate: selectedDate,
-                              firstDate: DateTime.now().subtract(const Duration(days: 365)),
-                              lastDate: DateTime.now().add(const Duration(days: 365)),
-                            );
-                            if (date != null) setSheetState(() => selectedDate = date);
-                          },
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.05),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.calendar_today, color: Color(0xFF4285F4), size: 20),
-                                const SizedBox(width: 8),
-                                Text(DateFormat('dd/MM').format(selectedDate), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: InkWell(
-                          onTap: () async {
-                            final time = await showTimePicker(
-                              context: context,
-                              initialTime: selectedTime,
-                            );
-                            if (time != null) setSheetState(() => selectedTime = time);
-                          },
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.05),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const Icon(Icons.access_time, color: Color(0xFF4285F4), size: 20),
-                                const SizedBox(width: 8),
-                                Text(selectedTime.format(context), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF4285F4),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 0,
-                      ),
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Enregistrer', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-    
-    if (confirmed == true) {
-      setState(() => _isLoading = true);
-      if (shouldDelete) {
-        await _calendarService.deleteEvent(eventId);
-      } else if (title.isNotEmpty) {
-        final finalDateTime = DateTime(
-          selectedDate.year, selectedDate.month, selectedDate.day,
-          selectedTime.hour, selectedTime.minute,
-        );
-        await _calendarService.updateEvent(eventId, title, finalDateTime);
-      }
-      await _fetchEvents();
-      setState(() => _isLoading = false);
+  Future<void> _openForm([Map<String, dynamic>? event]) async {
+    DateTime initial;
+    if (event != null) {
+      final start = event['start']?['dateTime'] ?? event['start']?['date'];
+      initial = start != null ? DateTime.parse(start).toLocal() : _selectedDate;
+    } else {
+      final now = DateTime.now();
+      // Prochaine heure pleine pour un nouveau rappel.
+      initial = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day, now.hour + 1);
     }
-  }
 
-  @override
-  void dispose() {
-    _refreshTimer?.cancel();
-    super.dispose();
+    final result = await showAppSheet<_EventFormResult>(
+      context,
+      title: event == null ? 'Nouveau rappel' : 'Modifier l\'événement',
+      builder: (_) => _EventForm(initialTitle: event?['summary'] ?? '', initialDate: initial, canDelete: event != null),
+    );
+    if (result == null || !mounted) return;
+
+    setState(() => _isFetching = true);
+    try {
+      if (result.delete) {
+        await _calendarService.deleteEvent(event!['id']);
+        if (mounted) showAppSnackBar(context, 'Événement supprimé');
+      } else if (event == null) {
+        await _calendarService.createReminder(result.title, result.date);
+        if (mounted) showAppSnackBar(context, 'Rappel ajouté à votre agenda');
+      } else {
+        await _calendarService.updateEvent(event['id'], result.title, result.date);
+        if (mounted) showAppSnackBar(context, 'Événement mis à jour');
+      }
+    } catch (e) {
+      if (mounted) showAppSnackBar(context, 'Opération impossible, réessayez.', isError: true);
+    }
+    // Affiche le jour de l'événement créé / modifié.
+    if (!result.delete && mounted) _selectedDate = result.date;
+    await _fetchEvents();
   }
 
   @override
   Widget build(BuildContext context) {
-    const bentoBackground = Color(0xFF151515);
-    final bentoBorder = Border.all(color: Colors.white10, width: 1);
-
-    if (_isLoading) {
-      return Container(
-        height: 160,
-        decoration: BoxDecoration(color: bentoBackground, borderRadius: BorderRadius.circular(24), border: bentoBorder),
-        child: const Center(child: CircularProgressIndicator(color: Color(0xFF4285F4))),
-      );
-    }
+    if (_isLoading) return const SkeletonCard(height: 180);
 
     if (!_isLoggedIn) {
-      return InkWell(
-        onTap: _login,
-        borderRadius: BorderRadius.circular(24),
-        child: Container(
-          height: 120,
-          decoration: BoxDecoration(color: bentoBackground, borderRadius: BorderRadius.circular(24), border: bentoBorder),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.calendar_today, color: Colors.white),
-              SizedBox(width: 16),
-              Text('Connecter Google Agenda', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16)),
-            ],
-          ),
-        ),
+      return ConnectServiceCard(
+        icon: const Icon(Icons.event_rounded),
+        brandColor: AppColors.google,
+        service: 'Google Agenda',
+        description: 'Vos événements du jour et rappels rapides.',
+        onConnect: _login,
       );
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: bentoBackground,
-        borderRadius: BorderRadius.circular(24),
-        border: bentoBorder,
-      ),
-      padding: const EdgeInsets.all(16),
+    final theme = Theme.of(context);
+    final accent = theme.colorScheme.primary;
+
+    return AppCard(
+      padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.sm, AppSpacing.sm, AppSpacing.md),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              const SizedBox(width: 32),
-              Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.chevron_left, color: Colors.white54),
-                      onPressed: () {
-                        setState(() {
-                          _selectedDate = _selectedDate.subtract(const Duration(days: 1));
-                        });
-                        _fetchEvents();
-                      },
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      _formatDateLabel(_selectedDate),
-                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(width: 12),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right, color: Colors.white54),
-                      onPressed: () {
-                        setState(() {
-                          _selectedDate = _selectedDate.add(const Duration(days: 1));
-                        });
-                        _fetchEvents();
-                      },
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    ),
-                  ],
+              Icon(Icons.event_rounded, size: 16, color: accent),
+              const SizedBox(width: AppSpacing.sm),
+              Text('AGENDA', style: theme.textTheme.labelSmall),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Jour précédent',
+                icon: const Icon(Icons.chevron_left_rounded),
+                onPressed: () => _changeDay(_selectedDate.subtract(const Duration(days: 1))),
+              ),
+              InkWell(
+                onTap: _pickDay,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+                  child: Text(formatRelativeDay(_selectedDate), style: theme.textTheme.titleMedium?.copyWith(fontSize: 14)),
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.add_circle, color: Colors.white54),
-                onPressed: _showAddReminderDialog,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32),
+                tooltip: 'Jour suivant',
+                icon: const Icon(Icons.chevron_right_rounded),
+                onPressed: () => _changeDay(_selectedDate.add(const Duration(days: 1))),
+              ),
+              IconButton.filledTonal(
+                tooltip: 'Nouveau rappel',
+                icon: const Icon(Icons.add_rounded),
+                onPressed: () => _openForm(),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          AnimatedOpacity(
+            duration: AppDurations.fast,
+            opacity: _isFetching ? 1 : 0,
+            child: const LinearProgressIndicator(minHeight: 2),
+          ),
+          const SizedBox(height: AppSpacing.sm),
           if (_events.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Text('Rien de prévu !', style: TextStyle(color: Colors.white54, fontSize: 14)),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xl),
+              child: Column(
+                children: [
+                  const Icon(Icons.wb_sunny_outlined, color: AppColors.textTertiary),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text('Rien de prévu', style: theme.textTheme.bodyMedium),
+                  if (!_isToday)
+                    TextButton(
+                      onPressed: () => _changeDay(DateTime.now()),
+                      child: const Text('Revenir à aujourd\'hui'),
+                    ),
+                ],
               ),
             )
           else
-            ..._events.map((event) {
-              final start = event['start']['dateTime'] ?? event['start']['date'];
-              final timeStr = start != null 
-                  ? DateFormat('HH:mm').format(DateTime.parse(start).toLocal())
-                  : 'Journée';
-                  
-              return InkWell(
-                onTap: () => _showEditEventDialog(event),
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
-                  child: Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white10,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          timeStr,
-                          style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          event['summary'] ?? 'Sans titre',
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
+            for (final event in _events) _EventRow(event: event, accent: accent, onTap: () => _openForm(event)),
+        ],
+      ),
+    );
+  }
+}
+
+class _EventRow extends StatelessWidget {
+  final Map<String, dynamic> event;
+  final Color accent;
+  final VoidCallback onTap;
+
+  const _EventRow({required this.event, required this.accent, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final dateTime = event['start']?['dateTime'] as String?;
+    final time = dateTime != null ? DateFormat('HH:mm').format(DateTime.parse(dateTime).toLocal()) : 'Journée';
+    final isPast = dateTime != null && DateTime.parse(dateTime).toLocal().isBefore(DateTime.now());
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm, horizontal: AppSpacing.xs),
+        child: Opacity(
+          opacity: isPast ? 0.5 : 1,
+          child: Row(
+            children: [
+              Container(
+                width: 3,
+                height: 28,
+                decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              SizedBox(
+                width: 58,
+                child: Text(
+                  time,
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, fontWeight: FontWeight.w700, fontFeatures: [FontFeature.tabularFigures()]),
                 ),
-              );
-            }),
+              ),
+              Expanded(
+                child: Text(
+                  event['summary'] ?? 'Sans titre',
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, size: 18, color: AppColors.textTertiary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EventFormResult {
+  final String title;
+  final DateTime date;
+  final bool delete;
+  const _EventFormResult({required this.title, required this.date, this.delete = false});
+}
+
+class _EventForm extends StatefulWidget {
+  final String initialTitle;
+  final DateTime initialDate;
+  final bool canDelete;
+
+  const _EventForm({required this.initialTitle, required this.initialDate, required this.canDelete});
+
+  @override
+  State<_EventForm> createState() => _EventFormState();
+}
+
+class _EventFormState extends State<_EventForm> {
+  final _formKey = GlobalKey<FormState>();
+  late final _title = TextEditingController(text: widget.initialTitle);
+  late DateTime _date = widget.initialDate;
+  late TimeOfDay _time = TimeOfDay.fromDateTime(widget.initialDate);
+
+  @override
+  void dispose() {
+    _title.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+    );
+    if (date != null) setState(() => _date = date);
+  }
+
+  Future<void> _pickTime() async {
+    final time = await showTimePicker(context: context, initialTime: _time);
+    if (time != null) setState(() => _time = time);
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.pop(
+      context,
+      _EventFormResult(
+        title: _title.text.trim(),
+        date: DateTime(_date.year, _date.month, _date.day, _time.hour, _time.minute),
+      ),
+    );
+  }
+
+  Future<void> _delete() async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Supprimer l\'événement ?',
+      message: 'Il sera aussi supprimé de votre Google Agenda.',
+      confirmLabel: 'Supprimer',
+      icon: Icons.delete_outline_rounded,
+      destructive: true,
+    );
+    if (confirmed && mounted) {
+      Navigator.pop(context, _EventFormResult(title: '', date: _date, delete: true));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Form(
+      key: _formKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _title,
+            autofocus: widget.initialTitle.isEmpty,
+            textCapitalization: TextCapitalization.sentences,
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _submit(),
+            decoration: const InputDecoration(
+              labelText: 'Titre',
+              hintText: 'Appeler le médecin',
+              prefixIcon: Icon(Icons.edit_note_rounded),
+            ),
+            validator: (v) => (v == null || v.trim().isEmpty) ? 'Titre requis' : null,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickDate,
+                  icon: const Icon(Icons.calendar_today_rounded, size: 18),
+                  label: Text(formatRelativeDay(_date)),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _pickTime,
+                  icon: const Icon(Icons.schedule_rounded, size: 18),
+                  label: Text(_time.format(context)),
+                ),
+              ),
+            ],
+          ),
+          if (!widget.canDelete) ...[
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'Une notification vous sera envoyée 15 minutes avant.',
+              style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
+            ),
+          ],
+          const SizedBox(height: AppSpacing.xl),
+          Row(
+            children: [
+              if (widget.canDelete) ...[
+                IconButton.outlined(
+                  tooltip: 'Supprimer',
+                  style: IconButton.styleFrom(
+                    foregroundColor: AppColors.danger,
+                    side: BorderSide(color: AppColors.danger.withValues(alpha: 0.4)),
+                    padding: const EdgeInsets.all(14),
+                  ),
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  onPressed: _delete,
+                ),
+                const SizedBox(width: AppSpacing.md),
+              ],
+              Expanded(
+                child: FilledButton(
+                  onPressed: _submit,
+                  child: Text(widget.canDelete ? 'Enregistrer' : 'Créer le rappel'),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:intl/intl.dart';
-import 'core/theme/app_theme.dart';
-import 'presentation/pages/dashboard_page.dart';
-import 'services/theme_service.dart';
+import 'app/app.dart';
+import 'app/app_scope.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,33 +17,19 @@ Future<void> main() async {
   }
   Intl.defaultLocale = 'fr_FR';
   await initializeDateFormatting('fr_FR');
-  runApp(const PanelApp());
-}
 
-class PanelApp extends StatelessWidget {
-  const PanelApp({super.key});
+  // Affichage bord à bord, barres système transparentes.
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarIconBrightness: Brightness.light,
+  ));
 
-  @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: themeNotifier,
-      builder: (context, _) => MaterialApp(
-        title: 'Panel',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.dark(themeNotifier.accentColor),
-        themeMode: ThemeMode.dark,
-        locale: const Locale('fr', 'FR'),
-        localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,
-          GlobalWidgetsLocalizations.delegate,
-          GlobalCupertinoLocalizations.delegate,
-        ],
-        supportedLocales: const [
-          Locale('fr', 'FR'),
-          Locale('en', 'US'),
-        ],
-        home: const DashboardPage(),
-      ),
-    );
-  }
+  // Les données sont chargées avant le premier affichage : pas de flash
+  // de couleur ni d'écran vide au démarrage.
+  final state = AppState();
+  await state.load();
+  runApp(PanelApp(state: state));
 }
